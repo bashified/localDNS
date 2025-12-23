@@ -5,3 +5,7 @@
 - The solution? Reinventing the wheel, writing my own DNS server and adding a little `if () {}` so that when a query is made for a domain that I have kept for my room server, the response is the ip to that server.
 
 - Works on my local network after configuring the router to use this as the default DNS server instead of ISP/Dynamic
+
+# References
+
+- NodeJS's official [DNS](https://nodejs.org/api/dns.html#dns) documentation
