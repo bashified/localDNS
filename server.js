@@ -17,7 +17,7 @@ const server = dns2.createServer({
             // local override for lab.local
             // add more overrides as needed for local network
 
-			if (name === "lab.local") {
+			if (name === "home.lab") {
 				console.log(`✅ Local override: ${name} → 192.168.1.50`);
 				response.answers.push({
 					name,
