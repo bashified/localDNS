@@ -1,73 +1,121 @@
-const dns2 = require('dns2');
+const dns2 = require("dns2");
 const { Packet } = dns2;
-const { resolveName } = require('./lib/resolver.js');
+const dns = require("node:dns").promises;
+
+const LOCAL_IP = "192.168.1.50";
 
 const server = dns2.createServer({
   udp: true,
   tcp: true,
-  handle: (request, send, rinfo) => {
+
+  handle: async (request, send, rinfo) => {
     const response = Packet.createResponseFromRequest(request);
-    const [question] = request.questions;
+    const question = request.questions[0];
     const { name, type } = question;
 
-    console.log(`DNS query for ${name} (${type})`);
+    console.log(`DNS ${rinfo.address}:${rinfo.port} → ${name} (${Packet.TYPE[type] || type})`);
 
-    if (type === Packet.TYPE.A) {
+    try {
 
-      // local override for home.lab
-      if (name === "home.lab") {
-        console.log(`✅ Local override: ${name} → 192.168.1.50`);
+      //  LOCAL OVERRIDE 
+      if (name === "home.lab" && type === Packet.TYPE.A) {
         response.answers.push({
           name,
           type: Packet.TYPE.A,
           class: Packet.CLASS.IN,
           ttl: 60,
-          address: "192.168.1.50"
+          address: LOCAL_IP
         });
-        response.header.rcode = 0; // NOERROR
+
+        response.header.rcode = Packet.RCODE.NOERROR;
         send(response);
         return;
       }
 
-      // continue with external resolution
-      resolveName(name, (addresses) => {
-        if (addresses && addresses.length > 0) {
-          addresses.forEach((address) => {
+      // EXTERNAL RESOLUTION
+
+      let answers = [];
+
+      switch (type) {
+        case Packet.TYPE.A: {
+          const ips = await dns.resolve4(name);
+          answers = ips.map(ip => ({
+            name,
+            type,
+            class: Packet.CLASS.IN,
+            ttl: 300,
+            address: ip
+          }));
+          break;
+        }
+
+        case Packet.TYPE.AAAA: {
+          const ips = await dns.resolve6(name);
+          answers = ips.map(ip => ({
+            name,
+            type,
+            class: Packet.CLASS.IN,
+            ttl: 300,
+            address: ip
+          }));
+          break;
+        }
+
+        case Packet.TYPE.CNAME: {
+          const cnames = await dns.resolveCname(name);
+          answers = cnames.map(cname => ({
+            name,
+            type,
+            class: Packet.CLASS.IN,
+            ttl: 300,
+            domain: cname
+          }));
+          break;
+        }
+
+        default: {
+          // pass through modern records (HTTPS / SVCB / TXT / etc)
+          const records = await dns.resolve(name, Packet.TYPE[type]);
+          records.forEach(r => {
             response.answers.push({
               name,
-              type: Packet.TYPE.A,
+              type,
               class: Packet.CLASS.IN,
               ttl: 300,
-              address
+              data: r
             });
           });
-          response.header.rcode = 0; // NOERROR
-        } else {
-          response.header.rcode = 3; // NXDOMAIN
+
+          response.header.rcode = Packet.RCODE.NOERROR;
+          send(response);
+          return;
         }
-        send(response);
-      });
-    } else {
-      // unsupported type
-      response.header.rcode = 5; // REFUSED
-      send(response);
+      }
+
+      if (answers.length > 0) {
+        response.answers.push(...answers);
+        response.header.rcode = Packet.RCODE.NOERROR;
+      } else {
+        response.header.rcode = Packet.RCODE.NXDOMAIN;
+      }
+    } catch (err) {
+      response.header.rcode = Packet.RCODE.NXDOMAIN;
     }
+
+    send(response);
   }
 });
 
-server.on('request', (request, response, rinfo) => {
-	console.log(`Request from ${rinfo.address}:${rinfo.port}`);
+server.on("listening", () => {
+  console.log("DNS server listening on:");
+  console.log(server.addresses());
 });
 
-server.on('listening', () => {
-	console.log('DNS server listening on:', server.addresses());
-});
-
-server.on('close', () => {
-	console.log('DNS server closed');
+server.on("error", err => {
+  console.error("DNS server error:", err);
 });
 
 server.listen({
-	udp: { port: 53, address: '192.168.1.50', type: 'udp4' },
-	tcp: { port: 53, address: '192.168.1.50' }
+  udp: { port: 53, address: LOCAL_IP, type: "udp4" },
+  tcp: { port: 53, address: LOCAL_IP }
 });
