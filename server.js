@@ -2,7 +2,7 @@ const dns2 = require("dns2");
 const { Packet } = dns2;
 const dns = require("node:dns").promises;
 
-const LOCAL_IP = "192.168.1.50";
+const LOCAL_IP = "0.0.0.0";
 
 const server = dns2.createServer({
   udp: true,
@@ -16,24 +16,22 @@ const server = dns2.createServer({
     console.log(`DNS ${rinfo.address}:${rinfo.port} → ${name} (${Packet.TYPE[type] || type})`);
 
     try {
-
-      //  LOCAL OVERRIDE 
+      // LOCAL OVERRIDE
       if (name === "home.lab" && type === Packet.TYPE.A) {
         response.answers.push({
           name,
           type: Packet.TYPE.A,
           class: Packet.CLASS.IN,
           ttl: 60,
-          address: LOCAL_IP
+          address: "192.168.1.50"
         });
 
-        response.header.rcode = Packet.RCODE.NOERROR;
+        response.header.rcode = 0; // NOERROR
         send(response);
         return;
       }
 
       // EXTERNAL RESOLUTION
-
       let answers = [];
 
       switch (type) {
@@ -74,8 +72,8 @@ const server = dns2.createServer({
         }
 
         default: {
-          // pass through modern records (HTTPS / SVCB / TXT / etc)
-          const records = await dns.resolve(name, Packet.TYPE[type]);
+          // pass through other records (TXT, etc.)
+          const records = await dns.resolve(name);
           records.forEach(r => {
             response.answers.push({
               name,
@@ -86,7 +84,7 @@ const server = dns2.createServer({
             });
           });
 
-          response.header.rcode = Packet.RCODE.NOERROR;
+          response.header.rcode = 0; // NOERROR
           send(response);
           return;
         }
@@ -94,12 +92,13 @@ const server = dns2.createServer({
 
       if (answers.length > 0) {
         response.answers.push(...answers);
-        response.header.rcode = Packet.RCODE.NOERROR;
+        response.header.rcode = 0; // NOERROR
       } else {
-        response.header.rcode = Packet.RCODE.NXDOMAIN;
+        response.header.rcode = 3; // NXDOMAIN
       }
     } catch (err) {
-      response.header.rcode = Packet.RCODE.NXDOMAIN;
+      console.error("Resolution error:", err);
+      response.header.rcode = 3; // NXDOMAIN on error
     }
 
     send(response);
