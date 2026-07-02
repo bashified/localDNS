@@ -1,6 +1,10 @@
 const dns2 = require("dns2");
 const { Packet } = dns2;
-const dns = require("node:dns").promises;
+const { Resolver } = require("node:dns").promises;
+
+// Initialize an isolated upstream resolver to prevent infinite network lookup loops
+const upstreamResolver = new Resolver();
+upstreamResolver.setServers(["1.1.1.1", "1.0.0.1"]);
 
 const LOCAL_IP = "0.0.0.0";
 
@@ -10,13 +14,21 @@ const server = dns2.createServer({
 
   handle: async (request, send, rinfo) => {
     const response = Packet.createResponseFromRequest(request);
+    
+    // Ensure there's actually a question in the packet payload
+    if (!request.questions || request.questions.length === 0) {
+      response.header.rcode = 1; // FORMERR (Format Error)
+      send(response);
+      return;
+    }
+
     const question = request.questions[0];
     const { name, type } = question;
 
     console.log(`DNS ${rinfo.address}:${rinfo.port} → ${name} (${Packet.TYPE[type] || type})`);
 
     try {
-      // LOCAL OVERRIDE
+      // 1. LOCAL LAB OVERRIDE
       if (name === "home.lab" && type === Packet.TYPE.A) {
         response.answers.push({
           name,
@@ -31,12 +43,12 @@ const server = dns2.createServer({
         return;
       }
 
-      // EXTERNAL RESOLUTION
+      // 2. EXTERNAL RESOLUTION FALLBACK
       let answers = [];
 
       switch (type) {
         case Packet.TYPE.A: {
-          const ips = await dns.resolve4(name);
+          const ips = await upstreamResolver.resolve4(name);
           answers = ips.map(ip => ({
             name,
             type,
@@ -48,7 +60,7 @@ const server = dns2.createServer({
         }
 
         case Packet.TYPE.AAAA: {
-          const ips = await dns.resolve6(name);
+          const ips = await upstreamResolver.resolve6(name);
           answers = ips.map(ip => ({
             name,
             type,
@@ -60,33 +72,29 @@ const server = dns2.createServer({
         }
 
         case Packet.TYPE.CNAME: {
-          const cnames = await dns.resolveCname(name);
+          const cnames = await upstreamResolver.resolveCname(name);
           answers = cnames.map(cname => ({
             name,
             type,
             class: Packet.CLASS.IN,
             ttl: 300,
-            domain: cname
+            domain: cname // dns2 maps CNAME targets to the 'domain' field
           }));
           break;
         }
 
         default: {
-          // pass through other records (TXT, etc.)
-          const records = await dns.resolve(name);
-          records.forEach(r => {
-            response.answers.push({
-              name,
-              type,
-              class: Packet.CLASS.IN,
-              ttl: 300,
-              data: r
-            });
-          });
-
-          response.header.rcode = 0; // NOERROR
-          send(response);
-          return;
+          // Fallback pass-through for other records using the native lookup
+          const rawRecords = await upstreamResolver.resolve(name, Packet.TYPE[type]);
+          // Minimal mapping layout; specialized types might require explicit object parsing
+          answers = rawRecords.map(r => ({
+            name,
+            type,
+            class: Packet.CLASS.IN,
+            ttl: 300,
+            data: typeof r === 'string' ? r : JSON.stringify(r)
+          }));
+          break;
         }
       }
 
@@ -96,24 +104,30 @@ const server = dns2.createServer({
       } else {
         response.header.rcode = 3; // NXDOMAIN
       }
+
     } catch (err) {
-      console.error("Resolution error:", err);
-      response.header.rcode = 3; // NXDOMAIN on error
+      // If code is ENODATA or ENOTFOUND, it's a standard missing domain. Don't spam errors.
+      if (err.code !== 'ENODATA' && err.code !== 'ENOTFOUND') {
+        console.error(`Resolution error for ${name}:`, err.message);
+      }
+      response.header.rcode = 3; // NXDOMAIN
     }
 
+    // Single send guarantee
     send(response);
   }
 });
 
 server.on("listening", () => {
-  console.log("DNS server listening on:");
+  console.log("DNS server successfully listening on:");
   console.log(server.addresses());
 });
 
 server.on("error", err => {
-  console.error("DNS server error:", err);
+  console.error("DNS server structural error:", err);
 });
 
+// Run with sudo / Admin access privileges to claim Port 53
 server.listen({
   udp: { port: 53, address: LOCAL_IP, type: "udp4" },
   tcp: { port: 53, address: LOCAL_IP }
