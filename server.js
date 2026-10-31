@@ -35,7 +35,7 @@ const server = dns2.createServer({
           type: Packet.TYPE.A,
           class: Packet.CLASS.IN,
           ttl: 60,
-          address: "192.168.1.50"
+          address: "10.42.0.1:80"
         });
 
         response.header.rcode = 0; // NOERROR
@@ -129,6 +129,6 @@ server.on("error", err => {
 
 // Run with sudo / Admin access privileges to claim Port 53
 server.listen({
-  udp: { port: 53, address: LOCAL_IP, type: "udp4" },
-  tcp: { port: 53, address: LOCAL_IP }
+  udp: { port: 6767, address: LOCAL_IP, type: "udp4" },
+  tcp: { port: 6767, address: LOCAL_IP }
 });
