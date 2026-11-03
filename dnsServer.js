@@ -44,7 +44,9 @@ function loadConfig() {
             };
 
             console.log(
-                `Loaded config with ${config.overrides?.filter(o => o.enabled).length || 0} active overrides`
+                `Loaded config with ${
+                    config.overrides?.filter(o => o.enabled).length || 0
+                } active overrides`
             );
         } else {
             console.log("No config.json found, using defaults");
@@ -72,6 +74,13 @@ function normalizeName(name) {
     return String(name).replace(/\.$/, "").toLowerCase();
 }
 
+// Convert numeric DNS type to its name
+function getTypeName(type) {
+    return Object.keys(Packet.TYPE).find(
+        key => Packet.TYPE[key] === type
+    ) || String(type);
+}
+
 const server = dns2.createServer({
     udp: true,
     tcp: true,
@@ -85,20 +94,21 @@ const server = dns2.createServer({
 
         if (clientInfo && clientInfo.blocked) {
             response.header.rcode = 5; // REFUSED
+
             send(response);
 
             logger.logQuery(
                 clientIp,
                 request.questions?.[0]?.name || "?",
-                Packet.TYPE[request.questions?.[0]?.type] || request.questions?.[0]?.type,
+                getTypeName(request.questions?.[0]?.type),
                 "REFUSED"
             );
 
             return;
         }
 
-        // Validate question
-        if (!request.questions || request.questions.length !== 1) {
+        // Ensure there is a valid question
+        if (!request.questions || request.questions.length === 0) {
             response.header.rcode = 1; // FORMERR
             send(response);
             return;
@@ -106,9 +116,11 @@ const server = dns2.createServer({
 
         const question = request.questions[0];
         const { name, type } = question;
-        const typeName = Packet.TYPE[type] || type;
+        const typeName = getTypeName(type);
 
-        console.log(`DNS ${clientIp}:${rinfo.port} → ${name} (${typeName})`);
+        console.log(
+            `DNS ${clientIp}:${rinfo.port} → ${name} (${typeName})`
+        );
 
         try {
             // Check for local overrides
@@ -117,13 +129,13 @@ const server = dns2.createServer({
                     o &&
                     o.enabled === true &&
                     normalizeName(o.name) === normalizeName(name) &&
-                    String(o.type).toUpperCase() === String(typeName).toUpperCase()
+                    String(o.type).toUpperCase() === typeName.toUpperCase()
                 );
 
                 if (override) {
-                    const overrideType = String(override.type).toUpperCase();
+                    if (override.type.toUpperCase() === "A" &&
+                        type === Packet.TYPE.A) {
 
-                    if (overrideType === "A" && type === Packet.TYPE.A) {
                         response.answers.push({
                             name,
                             type: Packet.TYPE.A,
@@ -131,7 +143,10 @@ const server = dns2.createServer({
                             ttl: override.ttl || 60,
                             address: override.value
                         });
-                    } else if (overrideType === "AAAA" && type === Packet.TYPE.AAAA) {
+
+                    } else if (override.type.toUpperCase() === "AAAA" &&
+                        type === Packet.TYPE.AAAA) {
+
                         response.answers.push({
                             name,
                             type: Packet.TYPE.AAAA,
@@ -139,7 +154,10 @@ const server = dns2.createServer({
                             ttl: override.ttl || 60,
                             address: override.value
                         });
-                    } else if (overrideType === "CNAME" && type === Packet.TYPE.CNAME) {
+
+                    } else if (override.type.toUpperCase() === "CNAME" &&
+                        type === Packet.TYPE.CNAME) {
+
                         response.answers.push({
                             name,
                             type: Packet.TYPE.CNAME,
@@ -255,10 +273,18 @@ const server = dns2.createServer({
                             typeName,
                             "UPSTREAM->OK"
                         );
+
                     } catch (e) {
                         if (e.code === "ENODATA") {
                             response.header.rcode = 0;
-                            logger.logQuery(clientIp, name, typeName, "NOERROR/NODATA");
+
+                            logger.logQuery(
+                                clientIp,
+                                name,
+                                typeName,
+                                "NOERROR/NODATA"
+                            );
+
                             send(response);
                             return;
                         }
@@ -272,20 +298,24 @@ const server = dns2.createServer({
 
             if (answers.length > 0) {
                 response.answers.push(...answers);
-                response.header.rcode = 0;
-            } else {
-                // Empty answer does not automatically mean NXDOMAIN
-                response.header.rcode = 0;
             }
+
+            response.header.rcode = 0;
 
         } catch (err) {
             if (err.code === "ENODATA") {
                 response.header.rcode = 0;
+
             } else if (err.code === "ENOTFOUND") {
                 response.header.rcode = 3; // NXDOMAIN
+
             } else {
                 response.header.rcode = 2; // SERVFAIL
-                console.error(`Resolution error for ${name}:`, err.message);
+
+                console.error(
+                    `Resolution error for ${name}:`,
+                    err.message
+                );
             }
 
             logger.logQuery(
