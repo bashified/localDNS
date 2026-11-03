@@ -1,3 +1,4 @@
+
 const dns2 = require("dns2");
 const { Packet } = dns2;
 const { Resolver } = require("node:dns").promises;
@@ -5,14 +6,13 @@ const fs = require("fs");
 const path = require("path");
 const Logger = require("./logger");
 
-// Initialize an isolated upstream resolver
+// Initialize upstream resolver
 const upstreamResolver = new Resolver();
 const logger = new Logger();
 
-// Share logger globally for web server
 global.dnsLogger = logger;
 
-// Load configuration
+// Configuration
 let config = {
     dns: {
         port: 6767,
@@ -22,36 +22,62 @@ let config = {
     overrides: []
 };
 
+const configPath = path.join(__dirname, "config.json");
+
+// Normalize DNS names for comparison
+function normalizeName(name) {
+    return String(name).replace(/\.$/, "").toLowerCase();
+}
+
+// Resolve a DNS type number to its name.
+// Supports either direction of the Packet.TYPE mapping.
+function getTypeName(type) {
+    const direct = Packet.TYPE[type];
+
+    if (typeof direct === "string") {
+        return direct.toUpperCase();
+    }
+
+    const reverse = Object.keys(Packet.TYPE).find(
+        key => Packet.TYPE[key] === type
+    );
+
+    return reverse ? reverse.toUpperCase() : String(type);
+}
+
+// Load configuration
 function loadConfig() {
     try {
-        const configPath = path.join(__dirname, "config.json");
-
-        if (fs.existsSync(configPath)) {
-            const raw = fs.readFileSync(configPath, "utf8");
-            const newConfig = JSON.parse(raw);
-
-            if (newConfig.dns?.upstream) {
-                upstreamResolver.setServers(newConfig.dns.upstream);
-            }
-
-            config = {
-                ...config,
-                ...newConfig,
-                dns: {
-                    ...config.dns,
-                    ...newConfig.dns
-                }
-            };
-
-            console.log(
-                `Loaded config with ${
-                    config.overrides?.filter(o => o.enabled).length || 0
-                } active overrides`
-            );
-        } else {
+        if (!fs.existsSync(configPath)) {
             console.log("No config.json found, using defaults");
             upstreamResolver.setServers(["1.1.1.1", "1.0.0.1"]);
+            return;
         }
+
+        const raw = fs.readFileSync(configPath, "utf8");
+        const newConfig = JSON.parse(raw);
+
+        if (newConfig.dns?.upstream) {
+            upstreamResolver.setServers(newConfig.dns.upstream);
+        }
+
+        config = {
+            ...config,
+            ...newConfig,
+            dns: {
+                ...config.dns,
+                ...newConfig.dns
+            }
+        };
+
+        const activeOverrides = config.overrides.filter(
+            override => override && override.enabled === true
+        );
+
+        console.log(`Loaded config from: ${configPath}`);
+        console.log(`Loaded config with ${activeOverrides.length} active overrides`);
+        console.log("Active overrides:", JSON.stringify(activeOverrides, null, 2));
+
     } catch (err) {
         console.error("Error loading config:", err.message);
     }
@@ -59,26 +85,12 @@ function loadConfig() {
 
 loadConfig();
 
-// Watch for config changes
-const configPath = path.join(__dirname, "config.json");
-
+// Watch configuration changes
 if (fs.existsSync(configPath)) {
     fs.watchFile(configPath, { interval: 1000 }, () => {
         console.log("Config file changed, reloading...");
         loadConfig();
     });
-}
-
-// Normalize DNS names
-function normalizeName(name) {
-    return String(name).replace(/\.$/, "").toLowerCase();
-}
-
-// Convert numeric DNS type to its name
-function getTypeName(type) {
-    return Object.keys(Packet.TYPE).find(
-        key => Packet.TYPE[key] === type
-    ) || String(type);
 }
 
 const server = dns2.createServer({
@@ -93,9 +105,7 @@ const server = dns2.createServer({
         const clientInfo = logger.clients.get(clientIp);
 
         if (clientInfo && clientInfo.blocked) {
-            response.header.rcode = 5; // REFUSED
-
-            send(response);
+            response.header.rcode = 5;
 
             logger.logQuery(
                 clientIp,
@@ -104,12 +114,13 @@ const server = dns2.createServer({
                 "REFUSED"
             );
 
+            send(response);
             return;
         }
 
-        // Ensure there is a valid question
+        // Validate request
         if (!request.questions || request.questions.length === 0) {
-            response.header.rcode = 1; // FORMERR
+            response.header.rcode = 1;
             send(response);
             return;
         }
@@ -123,67 +134,100 @@ const server = dns2.createServer({
         );
 
         try {
-            // Check for local overrides
-            if (Array.isArray(config.overrides)) {
-                const override = config.overrides.find(o =>
-                    o &&
-                    o.enabled === true &&
-                    normalizeName(o.name) === normalizeName(name) &&
-                    String(o.type).toUpperCase() === typeName.toUpperCase()
-                );
+            // Debug incoming query and configured overrides
+            console.log("DEBUG query:", {
+                name,
+                normalizedName: normalizeName(name),
+                type,
+                typeName
+            });
 
-                if (override) {
-                    if (override.type.toUpperCase() === "A" &&
-                        type === Packet.TYPE.A) {
-
-                        response.answers.push({
-                            name,
-                            type: Packet.TYPE.A,
-                            class: Packet.CLASS.IN,
-                            ttl: override.ttl || 60,
-                            address: override.value
-                        });
-
-                    } else if (override.type.toUpperCase() === "AAAA" &&
-                        type === Packet.TYPE.AAAA) {
-
-                        response.answers.push({
-                            name,
-                            type: Packet.TYPE.AAAA,
-                            class: Packet.CLASS.IN,
-                            ttl: override.ttl || 60,
-                            address: override.value
-                        });
-
-                    } else if (override.type.toUpperCase() === "CNAME" &&
-                        type === Packet.TYPE.CNAME) {
-
-                        response.answers.push({
-                            name,
-                            type: Packet.TYPE.CNAME,
-                            class: Packet.CLASS.IN,
-                            ttl: override.ttl || 300,
-                            domain: override.value
-                        });
+            // Find matching local override
+            const override = Array.isArray(config.overrides)
+                ? config.overrides.find(o => {
+                    if (!o || o.enabled !== true) {
+                        return false;
                     }
 
-                    if (response.answers.length > 0) {
-                        response.header.rcode = 0;
+                    const nameMatches =
+                        normalizeName(o.name) === normalizeName(name);
 
-                        logger.logQuery(
-                            clientIp,
-                            name,
-                            typeName,
-                            `OVERRIDE->${override.value}`
-                        );
+                    const typeMatches =
+                        String(o.type).toUpperCase() === typeName;
 
-                        send(response);
-                        return;
-                    }
+                    console.log("DEBUG checking override:", {
+                        configuredName: o.name,
+                        queriedName: name,
+                        nameMatches,
+                        configuredType: o.type,
+                        queriedType: typeName,
+                        typeMatches
+                    });
+
+                    return nameMatches && typeMatches;
+                })
+                : undefined;
+
+            console.log("DEBUG matched override:", override || "NONE");
+
+            // Handle local override
+            if (override) {
+                const overrideType = String(override.type).toUpperCase();
+
+                if (overrideType === "A" && type === Packet.TYPE.A) {
+                    response.answers.push({
+                        name,
+                        type: Packet.TYPE.A,
+                        class: Packet.CLASS.IN,
+                        ttl: override.ttl || 60,
+                        address: override.value
+                    });
+
+                } else if (
+                    overrideType === "AAAA" &&
+                    type === Packet.TYPE.AAAA
+                ) {
+                    response.answers.push({
+                        name,
+                        type: Packet.TYPE.AAAA,
+                        class: Packet.CLASS.IN,
+                        ttl: override.ttl || 60,
+                        address: override.value
+                    });
+
+                } else if (
+                    overrideType === "CNAME" &&
+                    type === Packet.TYPE.CNAME
+                ) {
+                    response.answers.push({
+                        name,
+                        type: Packet.TYPE.CNAME,
+                        class: Packet.CLASS.IN,
+                        ttl: override.ttl || 300,
+                        domain: override.value
+                    });
+                }
+
+                if (response.answers.length > 0) {
+                    response.header.rcode = 0;
+
+                    logger.logQuery(
+                        clientIp,
+                        name,
+                        typeName,
+                        `OVERRIDE->${override.value}`
+                    );
+
+                    console.log(
+                        `OVERRIDE MATCHED: ${name} → ${override.value}`
+                    );
+
+                    send(response);
+                    return;
                 }
             }
 
-            // External resolution fallback
+            // External DNS resolution
             let answers = [];
 
             switch (type) {
@@ -252,19 +296,19 @@ const server = dns2.createServer({
 
                 default: {
                     try {
-                        const rawRecords = await upstreamResolver.resolve(
+                        const records = await upstreamResolver.resolve(
                             name,
                             typeName
                         );
 
-                        answers = rawRecords.map(r => ({
+                        answers = records.map(record => ({
                             name,
                             type,
                             class: Packet.CLASS.IN,
                             ttl: 300,
-                            data: typeof r === "string"
-                                ? r
-                                : JSON.stringify(r)
+                            data: typeof record === "string"
+                                ? record
+                                : JSON.stringify(record)
                         }));
 
                         logger.logQuery(
@@ -274,8 +318,8 @@ const server = dns2.createServer({
                             "UPSTREAM->OK"
                         );
 
-                    } catch (e) {
-                        if (e.code === "ENODATA") {
+                    } catch (err) {
+                        if (err.code === "ENODATA") {
                             response.header.rcode = 0;
 
                             logger.logQuery(
@@ -289,7 +333,7 @@ const server = dns2.createServer({
                             return;
                         }
 
-                        throw e;
+                        throw err;
                     }
 
                     break;
@@ -307,10 +351,10 @@ const server = dns2.createServer({
                 response.header.rcode = 0;
 
             } else if (err.code === "ENOTFOUND") {
-                response.header.rcode = 3; // NXDOMAIN
+                response.header.rcode = 3;
 
             } else {
-                response.header.rcode = 2; // SERVFAIL
+                response.header.rcode = 2;
 
                 console.error(
                     `Resolution error for ${name}:`,
