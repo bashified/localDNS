@@ -1,12 +1,52 @@
 const dns2 = require("dns2");
 const { Packet } = dns2;
 const { Resolver } = require("node:dns").promises;
+const fs = require("fs");
+const path = require("path");
 
-// Initialize an isolated upstream resolver to prevent infinite network lookup loops
+// Initialize an isolated upstream resolver
 const upstreamResolver = new Resolver();
-upstreamResolver.setServers(["1.1.1.1", "1.0.0.1"]);
 
-const LOCAL_IP = "0.0.0.0";
+// Load configuration
+let config = {
+  dns: {
+    port: 6767,
+    bind: "0.0.0.0",
+    upstream: ["1.1.1.1", "1.0.0.1"]
+  },
+  overrides: []
+};
+
+function loadConfig() {
+  try {
+    const configPath = path.join(__dirname, "config.json");
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, "utf8");
+      config = JSON.parse(raw);
+      if (config.dns && config.dns.upstream) {
+        upstreamResolver.setServers(config.dns.upstream);
+      }
+      console.log(`Loaded config with ${config.overrides?.filter(o => o.enabled).length || 0} active overrides`);
+    } else {
+      console.log("No config.json found, using defaults");
+      upstreamResolver.setServers(["1.1.1.1", "1.0.0.1"]);
+    }
+  } catch (err) {
+    console.error("Error loading config:", err.message);
+    upstreamResolver.setServers(["1.1.1.1", "1.0.0.1"]);
+  }
+}
+
+loadConfig();
+
+// Watch for config changes
+const configPath = path.join(__dirname, "config.json");
+if (fs.existsSync(configPath)) {
+  fs.watchFile(configPath, { interval: 1000 }, () => {
+    console.log("Config file changed, reloading...");
+    loadConfig();
+  });
+}
 
 const server = dns2.createServer({
   udp: true,
@@ -17,33 +57,64 @@ const server = dns2.createServer({
     
     // Ensure there's actually a question in the packet payload
     if (!request.questions || request.questions.length === 0) {
-      response.header.rcode = 1; // FORMERR (Format Error)
+      response.header.rcode = 1; // FORMERR
       send(response);
       return;
     }
 
     const question = request.questions[0];
     const { name, type } = question;
+    const typeName = Packet.TYPE[type] || type;
 
-    console.log(`DNS ${rinfo.address}:${rinfo.port} → ${name} (${Packet.TYPE[type] || type})`);
+    console.log(`DNS ${rinfo.address}:${rinfo.port} → ${name} (${typeName})`);
 
     try {
-      // 1. LOCAL LAB OVERRIDE
-      if (name === "lab.pi" && type === Packet.TYPE.A) {
-        response.answers.push({
-          name,
-          type: Packet.TYPE.A,
-          class: Packet.CLASS.IN,
-          ttl: 60,
-          address: "10.42.0.1"
-        });
-
-        response.header.rcode = 0; // NOERROR
-        send(response);
-        return;
+      // Check for local overrides
+      if (config.overrides && Array.isArray(config.overrides)) {
+        const override = config.overrides.find(o => 
+          o.enabled && o.name.toLowerCase() === name.toLowerCase() && 
+          (o.type === typeName || o.type === type)
+        );
+        
+        if (override) {
+          if (override.type === "A" || type === Packet.TYPE.A) {
+            response.answers.push({
+              name,
+              type: Packet.TYPE.A,
+              class: Packet.CLASS.IN,
+              ttl: override.ttl || 60,
+              address: override.value
+            });
+            response.header.rcode = 0;
+            send(response);
+            return;
+          } else if (override.type === "AAAA" || type === Packet.TYPE.AAAA) {
+            response.answers.push({
+              name,
+              type: Packet.TYPE.AAAA,
+              class: Packet.CLASS.IN,
+              ttl: override.ttl || 60,
+              address: override.value
+            });
+            response.header.rcode = 0;
+            send(response);
+            return;
+          } else if (override.type === "CNAME" || type === Packet.TYPE.CNAME) {
+            response.answers.push({
+              name,
+              type: Packet.TYPE.CNAME,
+              class: Packet.CLASS.IN,
+              ttl: override.ttl || 300,
+              domain: override.value
+            });
+            response.header.rcode = 0;
+            send(response);
+            return;
+          }
+        }
       }
 
-      // 2. EXTERNAL RESOLUTION FALLBACK
+      // EXTERNAL RESOLUTION FALLBACK
       let answers = [];
 
       switch (type) {
@@ -78,57 +149,56 @@ const server = dns2.createServer({
             type,
             class: Packet.CLASS.IN,
             ttl: 300,
-            domain: cname // dns2 maps CNAME targets to the 'domain' field
+            domain: cname
           }));
           break;
         }
 
         default: {
-          // Fallback pass-through for other records using the native lookup
-          const rawRecords = await upstreamResolver.resolve(name, Packet.TYPE[type]);
-          // Minimal mapping layout; specialized types might require explicit object parsing
-          answers = rawRecords.map(r => ({
-            name,
-            type,
-            class: Packet.CLASS.IN,
-            ttl: 300,
-            data: typeof r === 'string' ? r : JSON.stringify(r)
-          }));
+          try {
+            const rawRecords = await upstreamResolver.resolve(name, Packet.TYPE[type]);
+            answers = rawRecords.map(r => ({
+              name,
+              type,
+              class: Packet.CLASS.IN,
+              ttl: 300,
+              data: typeof r === 'string' ? r : JSON.stringify(r)
+            }));
+          } catch (e) {
+            answers = [];
+          }
           break;
         }
       }
 
       if (answers.length > 0) {
         response.answers.push(...answers);
-        response.header.rcode = 0; // NOERROR
+        response.header.rcode = 0;
       } else {
         response.header.rcode = 3; // NXDOMAIN
       }
 
     } catch (err) {
-      // If code is ENODATA or ENOTFOUND, it's a standard missing domain. Don't spam errors.
       if (err.code !== 'ENODATA' && err.code !== 'ENOTFOUND') {
         console.error(`Resolution error for ${name}:`, err.message);
       }
-      response.header.rcode = 3; // NXDOMAIN
+      response.header.rcode = 3;
     }
 
-    // Single send guarantee
     send(response);
   }
 });
 
 server.on("listening", () => {
-  console.log("DNS server successfully listening on:");
+  console.log("LocalDNS server listening on:");
   console.log(server.addresses());
 });
 
 server.on("error", err => {
-  console.error("DNS server structural error:", err);
+  console.error("DNS server error:", err);
 });
 
-// Run with sudo / Admin access privileges to claim Port 53
 server.listen({
-  udp: { port: 6767, address: LOCAL_IP, type: "udp4" },
-  tcp: { port: 6767, address: LOCAL_IP }
+  udp: { port: config.dns.port || 6767, address: config.dns.bind || "0.0.0.0", type: "udp4" },
+  tcp: { port: config.dns.port || 6767, address: config.dns.bind || "0.0.0.0" }
 });
