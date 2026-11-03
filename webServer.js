@@ -8,7 +8,7 @@ const Logger = require("./logger");
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-const PORT = process.env.WEB_PORT || 8080;
+const PORT = process.env.WEB_PORT || 4242;
 const CONFIG_PATH = path.join(__dirname, "config.json");
 
 // Use shared logger or create new one
@@ -165,7 +165,7 @@ app.get("/api/logs/file/:filename", (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`LocalDNS Web UI running at http://localhost:${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`LocalDNS Web UI running at ${PORT}`);
 });
 
