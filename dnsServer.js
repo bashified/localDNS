@@ -4,7 +4,6 @@ const { Packet } = dns2;
 const { Resolver } = require("node:dns").promises;
 const fs = require("fs");
 const path = require("path");
-const Logger = require("./logger");
 
 const upstreamResolver = new Resolver();
 const logger = new Logger();
@@ -342,9 +341,3 @@ server.listen({
         address: config.dns.bind || "0.0.0.0"
     }
 });
-
-// Run the portal in the DNS process so both share the same logger and clients.
-const { startMonitor } = require("./dnsMonitor");
-startMonitor(logger);
-
-module.exports = { logger, server };
