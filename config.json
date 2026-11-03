@@ -6,22 +6,13 @@
   },
   "overrides": [
     {
-      "id": "storage-lab-pi",
+      "id": "lab-pi",
       "enabled": true,
-      "name": "storage-lab.pi",
+      "name": "lab.pi",
       "type": "A",
       "value": "10.42.0.1",
       "ttl": 60,
       "notes": "Home lab server"
-    },
-    {
-      "id": "dns-lab-pi",
-      "enabled": true,
-      "name": "dns-lab.pi",
-      "type": "A",
-      "value": "10.42.0.1",
-      "ttl": 60,
-      "notes": "Home lab DNS server"
     }
   ]
 }
