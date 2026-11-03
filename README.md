@@ -1,6 +1,6 @@
 # LocalDNS
 
-A lightweight, configurable DNS server built with Node.js. Resolve custom home lab domains to local IP addresses while forwarding all other queries to public DNS resolvers.
+A lightweight, configurable DNS server built with Node.js, featuring a modern web UI for managing local DNS overrides. Resolve custom home lab domains to local IP addresses while forwarding all other queries to public DNS resolvers.
 
 ## Why
 
@@ -87,18 +87,22 @@ npm install
 ### Dependencies
 
 - [dns2](https://www.npmjs.com/package/dns2) - DNS server implementation.
+- [express](https://www.npmjs.com/package/express) - Web UI backend.
+- [ws](https://www.npmjs.com/package/ws) - Live dashboard updates over WebSocket.
 
 ## Running
 
-### Start LocalDNS
+### Start LocalDNS and the Web UI
 
 ```bash
 sudo node dnsServer.js
 ```
 
-The DNS server listens on the configured port (default `53`) over both UDP and TCP. `npm start` runs the same entry point when your user already has permission to bind the DNS port.
+This starts both the DNS server and web UI in one process, so live device tracking and device controls share the DNS server's state directly. No separate monitor process is needed. `npm start` runs the same entry point when your user already has permission to bind the DNS port.
 
-If you do not use `sudo`, port 53 requires the Node.js binary to have permission to bind privileged ports. You can grant that capability instead:
+Open the web interface at [http://localhost:4242](http://localhost:4242). The web UI allows you to monitor devices, manage domain overrides, change DNS settings, and delete historical log files without manually editing the configuration file.
+
+The DNS server listens on the configured port (default `53`) over both UDP and TCP. If you do not use `sudo`, port 53 requires the Node.js binary to have permission to bind privileged ports. You can grant that capability instead:
 
 ```bash
 sudo setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(which node)")"
@@ -152,7 +156,9 @@ Clients should reconnect to obtain their DHCP configuration.
 
 ## Configuration
 
-All DNS configuration is stored in `config.json`. Edit this file directly to change server settings or domain overrides.
+All DNS configuration is stored in `config.json`.
+
+You can modify it directly or use the web interface.
 
 ### Example Configuration
 
@@ -190,13 +196,26 @@ All DNS configuration is stored in `config.json`. Edit this file directly to cha
 
 LocalDNS watches `config.json` for changes and automatically reloads its configuration.
 
+### Via Web UI
+
+1. Start LocalDNS and the web UI using `sudo node dnsServer.js`.
+2. Open `http://localhost:4242`.
+3. Add, edit, or remove domain overrides.
+4. Save your changes.
+
+Configuration changes are automatically picked up by the DNS server. To delete a log, open **Log History**, select the file, and click **Delete Log**.
+
 ## Project Structure
 
 ```text
 localDNS/
-├── dnsServer.js       # DNS server
-├── logger.js          # Query logging and device tracking
+├── dnsServer.js       # DNS server, web portal, and monitoring API
+├── logger.js          # Shared query logging and device tracking
 ├── config.json        # DNS configuration and overrides
+├── public/            # Web UI frontend
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
 └── lib/
     └── resolver.js    # Standalone DNS resolution helper
 ```
