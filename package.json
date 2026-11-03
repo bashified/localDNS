@@ -4,10 +4,10 @@
   "description": "Local DNS server with configurable overrides and web UI",
   "main": "dnsServer.js",
   "scripts": {
-    "start": "node dnsMonitor.js",
-    "dev": "node dnsMonitor.js",
+    "start": "node dnsServer.js",
+    "dev": "node dnsServer.js",
     "dns": "node dnsServer.js",
-    "web": "node dnsMonitor.js"
+    "web": "node dnsServer.js"
   },
   "dependencies": {
     "dns2": "^2.1.0",

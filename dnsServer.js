@@ -343,4 +343,8 @@ server.listen({
     }
 });
 
+// Run the portal in the DNS process so both share the same logger and clients.
+const { startMonitor } = require("./dnsMonitor");
+startMonitor(logger);
+
 module.exports = { logger, server };

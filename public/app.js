@@ -311,6 +311,8 @@ async function loadLogHistory() {
     const res = await fetch('/api/logs');
     const data = await res.json();
     const select = document.getElementById('logFileSelect');
+    const deleteBtn = document.getElementById('deleteLogFileBtn');
+    const selectedFile = select.value;
     select.innerHTML = '';
     data.files.forEach(f => {
         const opt = document.createElement('option');
@@ -318,8 +320,20 @@ async function loadLogHistory() {
         opt.textContent = f.name;
         select.appendChild(opt);
     });
+    deleteBtn.disabled = data.files.length === 0;
     if (data.files.length > 0) {
-        loadHistoryFile(data.files[0].name);
+        const fileToLoad = data.files.some(f => f.name === selectedFile)
+            ? selectedFile
+            : data.files[0].name;
+        select.value = fileToLoad;
+        await loadHistoryFile(fileToLoad);
+    } else {
+        document.getElementById('historyLogsList').innerHTML = `
+            <div class="empty-state">
+                <h3>No log files</h3>
+                <p>DNS query logs will appear here</p>
+            </div>
+        `;
     }
 }
 
@@ -327,8 +341,23 @@ document.getElementById('logFileSelect').addEventListener('change', (e) => {
     loadHistoryFile(e.target.value);
 });
 
+document.getElementById('deleteLogFileBtn').addEventListener('click', async () => {
+    const select = document.getElementById('logFileSelect');
+    const filename = select.value;
+    if (!filename) return;
+    if (!confirm(`Delete ${filename}? This cannot be undone.`)) return;
+
+    const res = await fetch(`/api/logs/file/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+        alert(data.error || 'Failed to delete log file');
+        return;
+    }
+    await loadLogHistory();
+});
+
 async function loadHistoryFile(filename) {
-    const res = await fetch(`/api/logs/file/${filename}`);
+    const res = await fetch(`/api/logs/file/${encodeURIComponent(filename)}`);
     const data = await res.json();
     const list = document.getElementById('historyLogsList');
     list.innerHTML = '';

@@ -113,7 +113,10 @@
         <div class="tab-content" id="history">
             <div class="section-header">
                 <h2>Log History</h2>
-                <select id="logFileSelect" class="form-input" style="width: auto;"></select>
+                <div class="log-controls">
+                    <select id="logFileSelect" class="form-input" style="width: auto;"></select>
+                    <button class="btn btn-danger" id="deleteLogFileBtn" disabled>🗑️ Delete Log</button>
+                </div>
             </div>
             <p class="section-description">Browse historical DNS query logs</p>
             

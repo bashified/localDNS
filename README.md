@@ -94,23 +94,17 @@ npm install
 ### Start LocalDNS and the Web UI
 
 ```bash
-npm start
+sudo node dnsServer.js
 ```
 
-This runs `dnsMonitor.js`, which starts the DNS server and web UI in the same process so live device tracking and device controls share the DNS server's state.
+This starts both the DNS server and web UI in one process, so live device tracking and device controls share the DNS server's state directly. No separate monitor process is needed. `npm start` runs the same entry point when your user already has permission to bind the DNS port.
 
-Open the web interface at [http://localhost:4242](http://localhost:4242). The web UI allows you to monitor devices, manage domain overrides, and change DNS settings without manually editing the configuration file.
+Open the web interface at [http://localhost:4242](http://localhost:4242). The web UI allows you to monitor devices, manage domain overrides, change DNS settings, and delete historical log files without manually editing the configuration file.
 
-The DNS server listens on the configured port (default `53`) over both UDP and TCP. Since port 53 is a privileged port on Linux, the Node.js process needs permission to bind to it. You can grant the Node.js binary the required capability:
+The DNS server listens on the configured port (default `53`) over both UDP and TCP. If you do not use `sudo`, port 53 requires the Node.js binary to have permission to bind privileged ports. You can grant that capability instead:
 
 ```bash
 sudo setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(which node)")"
-```
-
-To run only the DNS server without the web UI:
-
-```bash
-npm run dns
 ```
 
 ## Network Configuration
@@ -203,19 +197,19 @@ LocalDNS watches `config.json` for changes and automatically reloads its configu
 
 ### Via Web UI
 
-1. Start LocalDNS and the web UI using `npm start`.
+1. Start LocalDNS and the web UI using `sudo node dnsServer.js`.
 2. Open `http://localhost:4242`.
 3. Add, edit, or remove domain overrides.
 4. Save your changes.
 
-Configuration changes are automatically picked up by the DNS server.
+Configuration changes are automatically picked up by the DNS server. To delete a log, open **Log History**, select the file, and click **Delete Log**.
 
 ## Project Structure
 
 ```text
 localDNS/
-├── dnsServer.js       # DNS server
-├── dnsMonitor.js      # Combined DNS server and web UI entry point
+├── dnsServer.js       # Integrated DNS server and web UI entry point
+├── dnsMonitor.js      # Web portal and monitoring API
 ├── logger.js          # Shared query logging and device tracking
 ├── config.json        # DNS configuration and overrides
 ├── public/            # Web UI frontend
