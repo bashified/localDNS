@@ -9,8 +9,6 @@ const Logger = require("./logger");
 const upstreamResolver = new Resolver();
 const logger = new Logger();
 
-global.dnsLogger = logger;
-
 let config = {
     dns: {
         port: 6767,
@@ -344,3 +342,5 @@ server.listen({
         address: config.dns.bind || "0.0.0.0"
     }
 });
+
+module.exports = { logger, server };

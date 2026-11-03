@@ -3,17 +3,15 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const WebSocket = require("ws");
-const Logger = require("./logger");
+
+// Start DNS in this process so monitoring and client controls share its logger.
+const { logger } = require("./dnsServer");
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const PORT = process.env.WEB_PORT || 4242;
 const CONFIG_PATH = path.join(__dirname, "config.json");
-
-// Use shared logger or create new one
-const logger = global.dnsLogger || new Logger();
-global.dnsLogger = logger;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
