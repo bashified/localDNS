@@ -3,9 +3,14 @@ const { Packet } = dns2;
 const { Resolver } = require("node:dns").promises;
 const fs = require("fs");
 const path = require("path");
+const Logger = require("./logger");
 
 // Initialize an isolated upstream resolver
 const upstreamResolver = new Resolver();
+const logger = new Logger();
+
+// Share logger globally for web server
+global.dnsLogger = logger;
 
 // Load configuration
 let config = {
@@ -54,6 +59,16 @@ const server = dns2.createServer({
 
   handle: async (request, send, rinfo) => {
     const response = Packet.createResponseFromRequest(request);
+    const clientIp = rinfo.address;
+    
+    // Check if client is blocked
+    const clientInfo = logger.clients.get(clientIp);
+    if (clientInfo && clientInfo.blocked) {
+      response.header.rcode = 5; // REFUSED
+      send(response);
+      logger.logQuery(clientIp, request.questions?.[0]?.name || "?", Packet.TYPE[request.questions?.[0]?.type] || request.questions?.[0]?.type, "REFUSED");
+      return;
+    }
     
     // Ensure there's actually a question in the packet payload
     if (!request.questions || request.questions.length === 0) {
@@ -66,7 +81,7 @@ const server = dns2.createServer({
     const { name, type } = question;
     const typeName = Packet.TYPE[type] || type;
 
-    console.log(`DNS ${rinfo.address}:${rinfo.port} → ${name} (${typeName})`);
+    console.log(`DNS ${clientIp}:${rinfo.port} → ${name} (${typeName})`);
 
     try {
       // Check for local overrides
@@ -86,6 +101,7 @@ const server = dns2.createServer({
               address: override.value
             });
             response.header.rcode = 0;
+            logger.logQuery(clientIp, name, typeName, `OVERRIDE->${override.value}`);
             send(response);
             return;
           } else if (override.type === "AAAA" || type === Packet.TYPE.AAAA) {
@@ -97,6 +113,7 @@ const server = dns2.createServer({
               address: override.value
             });
             response.header.rcode = 0;
+            logger.logQuery(clientIp, name, typeName, `OVERRIDE->${override.value}`);
             send(response);
             return;
           } else if (override.type === "CNAME" || type === Packet.TYPE.CNAME) {
@@ -108,6 +125,7 @@ const server = dns2.createServer({
               domain: override.value
             });
             response.header.rcode = 0;
+            logger.logQuery(clientIp, name, typeName, `OVERRIDE->${override.value}`);
             send(response);
             return;
           }
@@ -127,6 +145,7 @@ const server = dns2.createServer({
             ttl: 300,
             address: ip
           }));
+          logger.logQuery(clientIp, name, typeName, `UPSTREAM->${ips.join(',')}`);
           break;
         }
 
@@ -139,6 +158,7 @@ const server = dns2.createServer({
             ttl: 300,
             address: ip
           }));
+          logger.logQuery(clientIp, name, typeName, `UPSTREAM->${ips.join(',')}`);
           break;
         }
 
@@ -151,6 +171,7 @@ const server = dns2.createServer({
             ttl: 300,
             domain: cname
           }));
+          logger.logQuery(clientIp, name, typeName, `UPSTREAM->${cnames.join(',')}`);
           break;
         }
 
@@ -164,8 +185,10 @@ const server = dns2.createServer({
               ttl: 300,
               data: typeof r === 'string' ? r : JSON.stringify(r)
             }));
+            logger.logQuery(clientIp, name, typeName, `UPSTREAM->OK`);
           } catch (e) {
             answers = [];
+            logger.logQuery(clientIp, name, typeName, `NXDOMAIN`);
           }
           break;
         }
@@ -183,6 +206,7 @@ const server = dns2.createServer({
         console.error(`Resolution error for ${name}:`, err.message);
       }
       response.header.rcode = 3;
+      logger.logQuery(clientIp, name, typeName, `ERROR/NXDOMAIN`);
     }
 
     send(response);
@@ -202,3 +226,4 @@ server.listen({
   udp: { port: config.dns.port || 6767, address: config.dns.bind || "0.0.0.0", type: "udp4" },
   tcp: { port: config.dns.port || 6767, address: config.dns.bind || "0.0.0.0" }
 });
+

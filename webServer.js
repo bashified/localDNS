@@ -1,10 +1,19 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const http = require("http");
+const WebSocket = require("ws");
+const Logger = require("./logger");
 
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 const PORT = process.env.WEB_PORT || 8080;
 const CONFIG_PATH = path.join(__dirname, "config.json");
+
+// Use shared logger or create new one
+const logger = global.dnsLogger || new Logger();
+global.dnsLogger = logger;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -25,6 +34,49 @@ function loadConfig() {
 function saveConfig(config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
+
+// WebSocket for live logs
+wss.on('connection', (ws) => {
+  console.log('Web client connected');
+  
+  // Send initial data
+  ws.send(JSON.stringify({
+    type: 'init',
+    clients: logger.getClients(),
+    logs: logger.getLogs(50)
+  }));
+  
+  ws.on('close', () => {
+    console.log('Web client disconnected');
+  });
+});
+
+// Broadcast function
+function broadcast(data) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  });
+}
+
+// Hook into logger to broadcast
+const originalLogQuery = logger.logQuery.bind(logger);
+logger.logQuery = function(clientIp, domain, type, result, cached = false) {
+  const entry = originalLogQuery(clientIp, domain, type, result, cached);
+  broadcast({
+    type: 'log',
+    entry: {
+      timestamp: entry.timestamp,
+      clientIp,
+      domain,
+      type,
+      result
+    },
+    clients: logger.getClients()
+  });
+  return entry;
+};
 
 app.get("/api/config", (req, res) => {
   res.json(loadConfig());
@@ -71,6 +123,49 @@ app.delete("/api/overrides/:id", (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Client management
+app.get("/api/clients", (req, res) => {
+  res.json(logger.getClients());
+});
+
+app.post("/api/clients/:ip/block", (req, res) => {
+  const success = logger.blockClient(req.params.ip);
+  broadcast({ type: 'clients', clients: logger.getClients() });
+  res.json({ success });
+});
+
+app.post("/api/clients/:ip/unblock", (req, res) => {
+  const success = logger.unblockClient(req.params.ip);
+  broadcast({ type: 'clients', clients: logger.getClients() });
+  res.json({ success });
+});
+
+app.delete("/api/clients/:ip", (req, res) => {
+  const success = logger.clearClient(req.params.ip);
+  broadcast({ type: 'clients', clients: logger.getClients() });
+  res.json({ success });
+});
+
+// Logs
+app.get("/api/logs", (req, res) => {
+  const lines = parseInt(req.query.lines) || 100;
+  res.json({ logs: logger.getLogs(lines), files: logger.getAllLogFiles() });
+});
+
+app.get("/api/logs/file/:filename", (req, res) => {
+  try {
+    const filePath = path.join(logger.logsDir, req.params.filename);
+    if (!filePath.startsWith(logger.logsDir)) {
+      return res.status(403).json({ error: 'Invalid path' });
+    }
+    const content = fs.readFileSync(filePath, "utf8");
+    res.json({ content });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+server.listen(PORT, () => {
   console.log(`LocalDNS Web UI running at http://localhost:${PORT}`);
 });
+

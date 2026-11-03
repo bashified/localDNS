@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LocalDNS - Configuration</title>
+    <title>LocalDNS - Control Panel</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -12,32 +12,70 @@
         <header class="header">
             <div class="header-content">
                 <h1 class="logo">🌐 LocalDNS</h1>
-                <p class="subtitle">Configure DNS overrides and routing</p>
+                <p class="subtitle">DNS Control Panel - Monitor & Manage</p>
             </div>
             <div class="status-indicator">
                 <span class="status-dot"></span>
-                <span class="status-text">Running</span>
+                <span class="status-text">Live</span>
             </div>
         </header>
 
         <div class="tabs">
-            <button class="tab-btn active" data-tab="overrides">Domain Overrides</button>
-            <button class="tab-btn" data-tab="settings">Server Settings</button>
-            <button class="tab-btn" data-tab="help">Help</button>
+            <button class="tab-btn active" data-tab="logs">Live Logs</button>
+            <button class="tab-btn" data-tab="devices">Devices</button>
+            <button class="tab-btn" data-tab="overrides">Overrides</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
+            <button class="tab-btn" data-tab="history">Log History</button>
         </div>
 
-        <div class="tab-content active" id="overrides">
+        <!-- Live Logs Tab -->
+        <div class="tab-content active" id="logs">
+            <div class="section-header">
+                <h2>Live DNS Queries</h2>
+                <div class="log-controls">
+                    <button class="btn btn-secondary" id="clearLiveLogsBtn">Clear</button>
+                    <span class="auto-scroll-indicator">Auto-scroll: ON</span>
+                </div>
+            </div>
+            <p class="section-description">Real-time DNS requests from all devices</p>
+            
+            <div class="logs-container" id="logsContainer">
+                <div class="log-entry log-header">
+                    <span class="log-time">Time</span>
+                    <span class="log-client">Client IP</span>
+                    <span class="log-domain">Domain</span>
+                    <span class="log-type">Type</span>
+                    <span class="log-result">Result</span>
+                </div>
+                <div id="logsList" class="logs-list"></div>
+            </div>
+        </div>
+
+        <!-- Devices Tab -->
+        <div class="tab-content" id="devices">
+            <div class="section-header">
+                <h2>Connected Devices</h2>
+                <button class="btn btn-secondary" id="refreshDevicesBtn">🔄 Refresh</button>
+            </div>
+            <p class="section-description">Track and control DNS access per device</p>
+            
+            <div class="devices-grid" id="devicesGrid">
+                <!-- Devices will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Overrides Tab -->
+        <div class="tab-content" id="overrides">
             <div class="section-header">
                 <h2>DNS Overrides</h2>
                 <button class="btn btn-primary" id="addOverrideBtn">+ Add Override</button>
             </div>
             <p class="section-description">Route specific domains to custom IP addresses</p>
             
-            <div class="overrides-list" id="overridesList">
-                <!-- Overrides will be populated by JavaScript -->
-            </div>
+            <div class="overrides-list" id="overridesList"></div>
         </div>
 
+        <!-- Settings Tab -->
         <div class="tab-content" id="settings">
             <div class="section-header">
                 <h2>Server Configuration</h2>
@@ -51,7 +89,7 @@
                     <div class="form-group">
                         <label for="dnsPort">Port</label>
                         <input type="number" id="dnsPort" class="form-input">
-                        <small class="form-help">Default is 6767 (use with dnsmasq on port forwarding)</small>
+                        <small class="form-help">Default is 6767</small>
                     </div>
                     <div class="form-group">
                         <label for="dnsBind">Bind Address</label>
@@ -71,32 +109,56 @@
             </div>
         </div>
 
-        <div class="tab-content" id="help">
+        <!-- Log History Tab -->
+        <div class="tab-content" id="history">
             <div class="section-header">
-                <h2>Setup Guide</h2>
+                <h2>Log History</h2>
+                <select id="logFileSelect" class="form-input" style="width: auto;"></select>
             </div>
-            <div class="help-content">
-                <div class="card">
-                    <h3>How to use</h3>
-                    <ol class="help-list">
-                        <li>Add domain overrides in the "Domain Overrides" tab</li>
-                        <li>Start the DNS server: <code>node dnsServer.js</code></li>
-                        <li>Configure dnsmasq to forward to this server on the configured port</li>
-                        <li>Point your clients to use the dnsmasq router as DNS</li>
-                    </ol>
+            <p class="section-description">Browse historical DNS query logs</p>
+            
+            <div class="logs-container">
+                <div class="log-entry log-header">
+                    <span class="log-time">Time</span>
+                    <span class="log-client">Client IP</span>
+                    <span class="log-domain">Domain</span>
+                    <span class="log-type">Type</span>
+                    <span class="log-result">Result</span>
                 </div>
-                <div class="card">
-                    <h3>dnsmasq Configuration</h3>
-                    <pre class="code-block"># /etc/dnsmasq.conf
-server=YOUR_SERVER_IP#6767</pre>
+                <div id="historyLogsList" class="logs-list" style="max-height: 500px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Details Modal -->
+    <div class="modal" id="deviceModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Device Details</h3>
+                <button class="modal-close" id="deviceModalClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="device-detail-info">
+                    <div class="detail-row">
+                        <strong>IP Address:</strong> <span id="deviceDetailIp"></span>
+                    </div>
+                    <div class="detail-row">
+                        <strong>Status:</strong> <span id="deviceDetailStatus"></span>
+                    </div>
+                    <div class="detail-row">
+                        <strong>First Seen:</strong> <span id="deviceDetailFirstSeen"></span>
+                    </div>
+                    <div class="detail-row">
+                        <strong>Last Seen:</strong> <span id="deviceDetailLastSeen"></span>
+                    </div>
+                    <div class="detail-row">
+                        <strong>Total Queries:</strong> <span id="deviceDetailQueries"></span>
+                    </div>
                 </div>
-                <div class="card">
-                    <h3>Notes</h3>
-                    <ul class="help-list">
-                        <li>Changes to config.json are automatically reloaded by the DNS server</li>
-                        <li>Browsers with DNS-over-HTTPS may bypass system DNS</li>
-                        <li>Only A, AAAA, and CNAME records are supported for overrides</li>
-                    </ul>
+                <div class="modal-actions">
+                    <button class="btn btn-warning" id="blockDeviceBtn">🚫 Block DNS</button>
+                    <button class="btn btn-success" id="unblockDeviceBtn">✅ Unblock DNS</button>
+                    <button class="btn btn-danger" id="clearDeviceBtn">🗑️ Clear from History</button>
                 </div>
             </div>
         </div>
