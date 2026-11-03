@@ -6,13 +6,11 @@ const fs = require("fs");
 const path = require("path");
 const Logger = require("./logger");
 
-// Initialize upstream resolver
 const upstreamResolver = new Resolver();
 const logger = new Logger();
 
 global.dnsLogger = logger;
 
-// Configuration
 let config = {
     dns: {
         port: 6767,
@@ -24,13 +22,10 @@ let config = {
 
 const configPath = path.join(__dirname, "config.json");
 
-// Normalize DNS names for comparison
 function normalizeName(name) {
     return String(name).replace(/\.$/, "").toLowerCase();
 }
 
-// Resolve a DNS type number to its name.
-// Supports either direction of the Packet.TYPE mapping.
 function getTypeName(type) {
     const direct = Packet.TYPE[type];
 
@@ -45,7 +40,6 @@ function getTypeName(type) {
     return reverse ? reverse.toUpperCase() : String(type);
 }
 
-// Load configuration
 function loadConfig() {
     try {
         if (!fs.existsSync(configPath)) {
@@ -76,7 +70,6 @@ function loadConfig() {
 
         console.log(`Loaded config from: ${configPath}`);
         console.log(`Loaded config with ${activeOverrides.length} active overrides`);
-        console.log("Active overrides:", JSON.stringify(activeOverrides, null, 2));
 
     } catch (err) {
         console.error("Error loading config:", err.message);
@@ -85,7 +78,7 @@ function loadConfig() {
 
 loadConfig();
 
-// Watch configuration changes
+// Watch for configuration changes
 if (fs.existsSync(configPath)) {
     fs.watchFile(configPath, { interval: 1000 }, () => {
         console.log("Config file changed, reloading...");
@@ -129,48 +122,19 @@ const server = dns2.createServer({
         const { name, type } = question;
         const typeName = getTypeName(type);
 
-        console.log(
-            `DNS ${clientIp}:${rinfo.port} → ${name} (${typeName})`
-        );
+        console.log(`DNS ${clientIp}:${rinfo.port} → ${name} (${typeName})`);
 
         try {
-            // Debug incoming query and configured overrides
-            console.log("DEBUG query:", {
-                name,
-                normalizedName: normalizeName(name),
-                type,
-                typeName
-            });
-
-            // Find matching local override
+            // Check local overrides
             const override = Array.isArray(config.overrides)
-                ? config.overrides.find(o => {
-                    if (!o || o.enabled !== true) {
-                        return false;
-                    }
-
-                    const nameMatches =
-                        normalizeName(o.name) === normalizeName(name);
-
-                    const typeMatches =
-                        String(o.type).toUpperCase() === typeName;
-
-                    console.log("DEBUG checking override:", {
-                        configuredName: o.name,
-                        queriedName: name,
-                        nameMatches,
-                        configuredType: o.type,
-                        queriedType: typeName,
-                        typeMatches
-                    });
-
-                    return nameMatches && typeMatches;
-                })
+                ? config.overrides.find(o =>
+                    o &&
+                    o.enabled === true &&
+                    normalizeName(o.name) === normalizeName(name) &&
+                    String(o.type).toUpperCase() === typeName
+                )
                 : undefined;
 
-            console.log("DEBUG matched override:", override || "NONE");
-
-            // Handle local override
             if (override) {
                 const overrideType = String(override.type).toUpperCase();
 
@@ -218,16 +182,12 @@ const server = dns2.createServer({
                         `OVERRIDE->${override.value}`
                     );
 
-                    console.log(
-                        `OVERRIDE MATCHED: ${name} → ${override.value}`
-                    );
-
                     send(response);
                     return;
                 }
             }
 
-            // External DNS resolution
+            // Resolve through upstream DNS
             let answers = [];
 
             switch (type) {
@@ -248,7 +208,6 @@ const server = dns2.createServer({
                         typeName,
                         `UPSTREAM->${ips.join(",")}`
                     );
-
                     break;
                 }
 
@@ -269,7 +228,6 @@ const server = dns2.createServer({
                         typeName,
                         `UPSTREAM->${ips.join(",")}`
                     );
-
                     break;
                 }
 
@@ -290,7 +248,6 @@ const server = dns2.createServer({
                         typeName,
                         `UPSTREAM->${cnames.join(",")}`
                     );
-
                     break;
                 }
 
@@ -335,7 +292,6 @@ const server = dns2.createServer({
 
                         throw err;
                     }
-
                     break;
                 }
             }
@@ -349,17 +305,11 @@ const server = dns2.createServer({
         } catch (err) {
             if (err.code === "ENODATA") {
                 response.header.rcode = 0;
-
             } else if (err.code === "ENOTFOUND") {
                 response.header.rcode = 3;
-
             } else {
                 response.header.rcode = 2;
-
-                console.error(
-                    `Resolution error for ${name}:`,
-                    err.message
-                );
+                console.error(`Resolution error for ${name}:`, err.message);
             }
 
             logger.logQuery(
