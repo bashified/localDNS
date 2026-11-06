@@ -18,13 +18,59 @@ let config = {
         bind: "0.0.0.0",
         upstream: ["1.1.1.1", "1.0.0.1"]
     },
-    overrides: []
+    overrides: [],
+    blockedDomains: []
 };
 
 const configPath = path.join(__dirname, "config.json");
 
+const domainStats = new Map(); // domain -> { count, lastSeen }
+
 function normalizeName(name) {
     return String(name).replace(/\.$/, "").toLowerCase();
+}
+
+function normalizeBlockEntry(input) {
+    let value = String(input).trim().toLowerCase();
+
+    if (value.includes("://")) {
+        try {
+            value = new URL(value).hostname;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    value = value.split("/")[0].replace(/^\*\./, "").replace(/\.$/, "");
+
+    return /^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(value) ? value : null;
+}
+
+function findBlockedRule(name) {
+    if (!Array.isArray(config.blockedDomains) || config.blockedDomains.length === 0) {
+        return null;
+    }
+
+    const labels = normalizeName(name).split(".");
+
+    for (let i = 0; i < labels.length; i++) {
+        const candidate = labels.slice(i).join(".");
+
+        if (config.blockedDomains.includes(candidate)) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
+function recordDomainQuery(name) {
+    const domain = normalizeName(name);
+    const entry = domainStats.get(domain) || { count: 0, lastSeen: null };
+
+    entry.count++;
+    entry.lastSeen = new Date().toISOString();
+    domainStats.set(domain, entry);
 }
 
 function getTypeName(type) {
@@ -124,6 +170,26 @@ const server = dns2.createServer({
         const typeName = getTypeName(type);
 
         console.log(`DNS ${clientIp}:${rinfo.port} → ${name} (${typeName})`);
+
+        if (type === Packet.TYPE.A || type === Packet.TYPE.AAAA) {
+            recordDomainQuery(name);
+        }
+
+        const blockedRule = findBlockedRule(name);
+
+        if (blockedRule) {
+            response.header.rcode = 3;
+
+            logger.logQuery(
+                clientIp,
+                name,
+                typeName,
+                `BLOCKED->${blockedRule}`
+            );
+
+            send(response);
+            return;
+        }
 
         try {
             // Check local overrides
@@ -366,7 +432,8 @@ function startWebPortal() {
                     bind: "0.0.0.0",
                     upstream: ["1.1.1.1", "1.0.0.1"]
                 },
-                overrides: []
+                overrides: [],
+                blockedDomains: []
             };
         }
     }
@@ -466,6 +533,66 @@ function startWebPortal() {
         } catch (err) {
             res.status(500).json({ success: false, error: err.message });
         }
+    });
+
+    app.get("/api/blocklist", (req, res) => {
+        res.json({ domains: readConfig().blockedDomains || [] });
+    });
+
+    app.post("/api/blocklist", (req, res) => {
+        try {
+            const domain = normalizeBlockEntry(req.body?.domain ?? "");
+
+            if (!domain) {
+                return res.status(400).json({ success: false, error: "Invalid domain or URL" });
+            }
+
+            const currentConfig = readConfig();
+            const domains = currentConfig.blockedDomains || [];
+
+            if (!domains.includes(domain)) {
+                domains.push(domain);
+            }
+
+            currentConfig.blockedDomains = domains;
+            saveConfig(currentConfig);
+            config.blockedDomains = domains;
+
+            res.json({ success: true, domain, domains });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.delete("/api/blocklist/:domain", (req, res) => {
+        try {
+            const domain = normalizeBlockEntry(req.params.domain);
+            const currentConfig = readConfig();
+            const domains = (currentConfig.blockedDomains || []).filter(d => d !== domain);
+
+            currentConfig.blockedDomains = domains;
+            saveConfig(currentConfig);
+            config.blockedDomains = domains;
+
+            res.json({ success: true, domains });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.get("/api/stats/top-domains", (req, res) => {
+        const limit = Math.min(parseInt(req.query.limit) || 20, 500);
+        const top = Array.from(domainStats.entries())
+            .sort((a, b) => b[1].count - a[1].count)
+            .slice(0, limit)
+            .map(([domain, stats]) => ({
+                domain,
+                count: stats.count,
+                lastSeen: stats.lastSeen,
+                blocked: findBlockedRule(domain) !== null
+            }));
+
+        res.json({ total: domainStats.size, domains: top });
     });
 
     app.get("/api/clients", (req, res) => {
