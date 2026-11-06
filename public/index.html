@@ -24,6 +24,8 @@
             <button class="tab-btn active" data-tab="logs">Live Logs</button>
             <button class="tab-btn" data-tab="devices">Devices</button>
             <button class="tab-btn" data-tab="overrides">Overrides</button>
+            <button class="tab-btn" data-tab="blocklist">Blocklist</button>
+            <button class="tab-btn" data-tab="topDomains">Top Domains</button>
             <button class="tab-btn" data-tab="settings">Settings</button>
             <button class="tab-btn" data-tab="history">Log History</button>
         </div>
@@ -73,6 +75,40 @@
             <p class="section-description">Route specific domains to custom IP addresses</p>
             
             <div class="overrides-list" id="overridesList"></div>
+        </div>
+
+        <!-- Blocklist Tab -->
+        <div class="tab-content" id="blocklist">
+            <div class="section-header">
+                <h2>Blocked Domains</h2>
+            </div>
+            <p class="section-description">Blocked domains return NXDOMAIN for all devices, including their subdomains. Full URLs are reduced to their domain.</p>
+
+            <form class="inline-form" id="blockForm">
+                <input type="text" id="blockDomainInput" class="form-input" placeholder="ads.example.com or https://example.com/page">
+                <button type="submit" class="btn btn-danger">🚫 Block</button>
+            </form>
+
+            <div class="overrides-list" id="blocklistItems"></div>
+        </div>
+
+        <!-- Top Domains Tab -->
+        <div class="tab-content" id="topDomains">
+            <div class="section-header">
+                <h2>Top Domains</h2>
+                <button class="btn btn-secondary" id="refreshTopDomainsBtn">🔄 Refresh</button>
+            </div>
+            <p class="section-description">Most looked-up domains across all devices since LocalDNS started</p>
+
+            <div class="logs-container domains-table">
+                <div class="log-entry log-header">
+                    <span class="log-domain">Domain</span>
+                    <span class="log-type">Queries</span>
+                    <span class="log-time">Last Seen</span>
+                    <span class="log-result">Status</span>
+                </div>
+                <div id="topDomainsList" class="logs-list" style="max-height: 500px;"></div>
+            </div>
         </div>
 
         <!-- Settings Tab -->

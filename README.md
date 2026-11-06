@@ -1,6 +1,16 @@
 # LocalDNS
 
-A lightweight, configurable DNS server built with Node.js, featuring a modern web UI for managing local DNS overrides. Resolve custom home lab domains to local IP addresses while forwarding all other queries to public DNS resolvers.
+LocalDNS is a full-fledged DNS server and monitor built with Node.js. It resolves custom home lab domains to local IP addresses, forwards everything else to public DNS resolvers, blocks unwanted domains for every device on your network, and provides a web UI to watch and control it all.
+
+### Features
+
+- **Local DNS overrides:** Map custom domains such as `lab.pi` to local IP addresses (A, AAAA, and CNAME records).
+- **Domain blocking:** Block domains and all their subdomains. Blocked lookups return NXDOMAIN, so pages and apps that depend on them stop loading.
+- **Live query monitoring:** Watch every DNS query from every device in real time.
+- **Device tracking:** See which devices are connected, when they were last active, and block or untrack them.
+- **Top domains:** See which domains are looked up most often across all devices.
+- **Log history:** Browse and delete historical query logs.
+- **Web UI:** Manage all of the above from a browser without editing files.
 
 ## Why
 
@@ -100,7 +110,7 @@ sudo node dnsServer.js
 
 This starts both the DNS server and web UI in one process, so live device tracking and device controls share the DNS server's state directly. No separate monitor process is needed. `npm start` runs the same entry point when your user already has permission to bind the DNS port.
 
-Open the web interface at [http://localhost:4242](http://localhost:4242). The web UI allows you to monitor devices, manage domain overrides, change DNS settings, and delete historical log files without manually editing the configuration file.
+Open the web interface at [http://localhost:4242](http://localhost:4242). The web UI allows you to monitor queries and devices, manage domain overrides, block domains, review top domains, change DNS settings, and delete historical log files without manually editing the configuration file.
 
 The DNS server listens on the configured port (default `53`) over both UDP and TCP. If you do not use `sudo`, port 53 requires the Node.js binary to have permission to bind privileged ports. You can grant that capability instead:
 
@@ -182,6 +192,9 @@ You can modify it directly or use the web interface.
       "ttl": 60,
       "notes": "Home lab server"
     }
+  ],
+  "blockedDomains": [
+    "ads.example.com"
   ]
 }
 ```
@@ -196,14 +209,27 @@ You can modify it directly or use the web interface.
 
 LocalDNS watches `config.json` for changes and automatically reloads its configuration.
 
+### Blocking Domains
+
+`blockedDomains` is a list of domains that LocalDNS refuses to resolve for any device. Blocking a domain also blocks all of its subdomains, so `ads.example.com` blocks `tracker.ads.example.com` too.
+
+DNS only sees hostnames, not full URLs or paths. If you add a full URL such as `https://ads.example.com/banner.js`, LocalDNS keeps only the domain (`ads.example.com`). You cannot block a single path on a site while allowing the rest of it.
+
+Blocked lookups are logged with a `BLOCKED->` result and appear in red in the live log.
+
 ### Via Web UI
 
 1. Start LocalDNS and the web UI using `sudo node dnsServer.js`.
 2. Open `http://localhost:4242`.
-3. Add, edit, or remove domain overrides.
-4. Save your changes.
+3. Add, edit, or remove domain overrides in **Overrides**.
+4. Block or unblock domains in **Blocklist**, or block a domain straight from **Top Domains**.
+5. Save your changes in **Settings** if you edited them.
 
 Configuration changes are automatically picked up by the DNS server. To delete a log, open **Log History**, select the file, and click **Delete Log**.
+
+### Top Domains
+
+**Top Domains** lists the domains that devices look up most often, across all devices, with query counts and last-seen times. These statistics are kept in memory and reset when LocalDNS restarts. Use the **Refresh** button to update the list.
 
 ## Project Structure
 
@@ -224,7 +250,9 @@ localDNS/
 
 ## Limitations
 
-- **DNS-over-HTTPS (DoH):** Some browsers and applications use their own DNS resolvers, bypassing the system DNS configuration. Local overrides may not resolve in these applications unless secure DNS is disabled or configured to use the local resolver.
+- **DNS-over-HTTPS (DoH):** Some browsers and applications use their own DNS resolvers, bypassing the system DNS configuration. Local overrides and domain blocks may not apply in these applications unless secure DNS is disabled or configured to use the local resolver.
+- **Hostname-level blocking only:** Blocks apply to whole domains, not individual URLs or paths. Traffic to IP addresses directly is not affected.
+- **Top Domains is not persistent:** Query counts reset when LocalDNS restarts. The log files keep the full history.
 - **No caching:** DNS responses are not currently cached, so repeated external queries are forwarded to upstream resolvers.
 - **Single upstream strategy:** External queries are forwarded to the configured Cloudflare resolvers.
 

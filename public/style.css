@@ -358,6 +358,37 @@ body {
     color: var(--accent-warning);
 }
 
+.domains-table .log-entry {
+    grid-template-columns: 1fr 100px 180px 140px;
+}
+
+.inline-form {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.inline-form .form-input {
+    flex: 1;
+}
+
+.blocklist-item {
+    padding: 0.75rem 1.25rem;
+}
+
+.blocklist-item .override-name {
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 0.9375rem;
+}
+
+.domain-status.blocked {
+    color: var(--accent-danger);
+}
+
+.domain-status.allowed {
+    color: var(--accent-success);
+}
+
 .devices-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

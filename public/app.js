@@ -1,4 +1,4 @@
-let config = { dns: { port: 6767, bind: "0.0.0.0", upstream: ["1.1.1.1", "1.0.0.1"] }, overrides: [] };
+let config = { dns: { port: 6767, bind: "0.0.0.0", upstream: ["1.1.1.1", "1.0.0.1"] }, overrides: [], blockedDomains: [] };
 let ws;
 let autoScroll = true;
 let currentDevice = null;
@@ -39,7 +39,7 @@ function addLogEntry(entry, animate = true) {
     logDiv.className = 'log-entry' + (animate ? ' animate' : '');
     
     const time = new Date(entry.timestamp).toLocaleTimeString();
-    const resultClass = entry.result.includes('REFUSED') ? 'refused' : 
+    const resultClass = entry.result.includes('REFUSED') || entry.result.includes('BLOCKED') ? 'refused' : 
                         entry.result.includes('NXDOMAIN') ? 'nxdomain' : '';
     
     logDiv.innerHTML = `
@@ -134,6 +134,7 @@ async function loadConfig() {
         const res = await fetch('/api/config');
         config = await res.json();
         renderOverrides();
+        renderBlocklist();
         populateSettings();
     } catch (err) {
         console.error('Failed to load config:', err);
@@ -202,6 +203,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
         
         if (btn.dataset.tab === 'history') {
             loadLogHistory();
+        }
+
+        if (btn.dataset.tab === 'topDomains') {
+            loadTopDomains();
         }
     });
 });
@@ -305,6 +310,130 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     await fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) });
     alert('Settings saved! DNS server auto-reloads.');
 });
+
+function renderBlocklist() {
+    const list = document.getElementById('blocklistItems');
+    list.innerHTML = '';
+
+    const domains = config.blockedDomains || [];
+
+    if (domains.length === 0) {
+        list.innerHTML = `
+            <div class="empty-state">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">✅</div>
+                <h3>No blocked domains</h3>
+                <p>Add a domain above, or block one from the Top Domains tab</p>
+            </div>
+        `;
+        return;
+    }
+
+    domains.forEach(domain => {
+        const card = document.createElement('div');
+        card.className = 'override-card blocklist-item';
+        card.innerHTML = `
+            <div class="override-info">
+                <div class="override-header">
+                    <span class="override-name">${escapeHtml(domain)}</span>
+                </div>
+                <div class="override-details">
+                    <span>Blocks this domain and all subdomains</span>
+                </div>
+            </div>
+            <div class="override-actions">
+                <button class="btn-icon" title="Unblock">🗑️</button>
+            </div>
+        `;
+        card.querySelector('.btn-icon').addEventListener('click', () => unblockDomain(domain));
+        list.appendChild(card);
+    });
+}
+
+async function blockDomain(input) {
+    const res = await fetch('/api/blocklist', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ domain: input }) });
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+        alert(data.error || 'Failed to block domain');
+        return false;
+    }
+
+    config.blockedDomains = data.domains;
+    renderBlocklist();
+    return true;
+}
+
+async function unblockDomain(domain) {
+    if (!confirm(`Unblock ${domain}?`)) return;
+    const res = await fetch(`/api/blocklist/${encodeURIComponent(domain)}`, { method: 'DELETE' });
+    const data = await res.json();
+
+    if (!data.success) {
+        alert('Failed to unblock domain');
+        return;
+    }
+
+    config.blockedDomains = data.domains;
+    renderBlocklist();
+}
+
+document.getElementById('blockForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('blockDomainInput');
+    const value = input.value.trim();
+    if (!value) return;
+    if (await blockDomain(value)) {
+        input.value = '';
+    }
+});
+
+async function loadTopDomains() {
+    const res = await fetch('/api/stats/top-domains?limit=100');
+    const data = await res.json();
+    const list = document.getElementById('topDomainsList');
+    list.innerHTML = '';
+
+    if (data.domains.length === 0) {
+        list.innerHTML = `
+            <div class="empty-state">
+                <h3>No queries yet</h3>
+                <p>Domains will appear here as devices look them up</p>
+            </div>
+        `;
+        return;
+    }
+
+    data.domains.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'log-entry';
+
+        const lastSeen = item.lastSeen ? new Date(item.lastSeen).toLocaleString() : '';
+
+        row.innerHTML = `
+            <span class="log-domain">${escapeHtml(item.domain)}</span>
+            <span class="log-type">${item.count}</span>
+            <span class="log-time">${escapeHtml(lastSeen)}</span>
+            <span class="domain-status ${item.blocked ? 'blocked' : 'allowed'}">${item.blocked ? '🚫 Blocked' : '✅ Allowed'}</span>
+        `;
+
+        if (!item.blocked) {
+            const blockBtn = document.createElement('button');
+            blockBtn.className = 'btn btn-danger';
+            blockBtn.textContent = 'Block';
+            blockBtn.style.marginLeft = '0.5rem';
+            blockBtn.addEventListener('click', async () => {
+                if (await blockDomain(item.domain)) {
+                    loadTopDomains();
+                }
+            });
+            row.querySelector('.domain-status').appendChild(blockBtn);
+        }
+
+        list.appendChild(row);
+    });
+}
+
+document.getElementById('refreshTopDomainsBtn').addEventListener('click', loadTopDomains);
 
 // Log history
 async function loadLogHistory() {
